@@ -16,6 +16,9 @@ In practice, we test each point by iterating the formula up to a maximum number 
 
 The resulting visualization reveals intricate, self-similar patterns at the boundary between bounded and unbounded regions, with infinite detail available through zooming.
 
+![Mandelbrot Set Visualization](test_mandelbrot_output.png)
+*Classic Mandelbrot set visualization showing the characteristic bulbous main body and circular secondary lobe, with intricate fractal boundaries rendered in the default blue color palette.*
+
 ## Features
 
 - **Area Selection Zooming** - Click and drag to select any rectangular region to zoom into

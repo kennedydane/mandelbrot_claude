@@ -55,6 +55,11 @@ class MandelbrotGUI:
         self.selection_end: Optional[Tuple[int, int]] = None
         self.selection_overlay_tag = None
         
+        # Resize optimization
+        self.resize_pending = False
+        self.last_resize_time = 0
+        self.resize_throttle_delay = 0.2  # 200ms throttle
+        
         logger.info(f"MandelbrotGUI initialized: {width}x{height}")
     
     def setup_gui(self) -> None:
@@ -77,24 +82,24 @@ class MandelbrotGUI:
         # Create initial black texture
         self._create_initial_texture()
         
-        # Main visualization window
+        # Main visualization window - properly sized to avoid scrollbars
         with dpg.window(
-            label="Mandelbrot Visualization",
+            label="Mandelbrot Visualization", 
             tag=self.main_window_tag,
             pos=[10, 10],
-            width=self.image_width + 20,
-            height=self.image_height + 80,
-            no_resize=True
+            width=self.image_width + 30,  # Extra padding for window borders
+            height=self.image_height + 80,  # Room for status text + window chrome
+            no_resize=False,  # Allow resizing
+            no_scrollbar=True,  # Disable scrollbars 
+            no_collapse=False,
+            on_close=lambda: dpg.stop_dearpygui()  # Close app when main window closes
         ):
-            # Image display - initially show the black texture
+            # Status text at the top - separated from image area
+            dpg.add_text("Click and drag to select area to zoom, or click to zoom to point", tag="status_text", wrap=self.image_width + 10)
+            dpg.add_separator()
+            
+            # Image display directly in main window
             dpg.add_image(self.current_texture_tag, tag=self.image_tag, width=self.image_width, height=self.image_height)
-            
-            # Status text
-            dpg.add_text("Click and drag to select area to zoom, or click to zoom to point", tag="status_text")
-            
-            # Add drawing canvas for selection overlay
-            with dpg.drawlist(width=self.image_width, height=self.image_height, tag="selection_overlay"):
-                pass  # Initially empty
             
             # Mouse handlers for area selection
             with dpg.handler_registry():
@@ -133,10 +138,19 @@ class MandelbrotGUI:
                     callback=lambda: self._zoom_back()
                 )
         
+        # Create window-specific handler registry for resize events
+        with dpg.item_handler_registry(tag="window_handlers") as handler_reg:
+            dpg.add_item_resize_handler(callback=self._on_window_resize)
+        
+        # Bind handler registry to main window
+        dpg.bind_item_handler_registry(self.main_window_tag, "window_handlers")
+        
         # Control panel
         self._create_control_panel()
         
+        
         logger.info("GUI setup complete")
+    
     
     def _create_initial_texture(self) -> None:
         """Create initial black texture using file-based approach."""
@@ -312,21 +326,10 @@ class MandelbrotGUI:
             # Update image widget to use new texture
             logger.debug(f"Updating image widget with texture: {new_texture_tag}")
             if dpg.does_item_exist(self.image_tag):
-                parent = dpg.get_item_parent(self.image_tag)
-                logger.debug(f"Deleting old image widget: {self.image_tag}")
-                dpg.delete_item(self.image_tag)
-                
-                # Recreate image widget with new texture
-                logger.debug(f"Creating new image widget in parent: {parent}")
-                dpg.add_image(
-                    new_texture_tag, 
-                    tag=self.image_tag, 
-                    width=self.image_width, 
-                    height=self.image_height,
-                    parent=parent,
-                    before="status_text"
-                )
-                logger.debug(f"Image widget recreated successfully")
+                # Update the texture source directly instead of recreating the widget
+                logger.debug(f"Updating image texture source to: {new_texture_tag}")
+                dpg.configure_item(self.image_tag, texture_tag=new_texture_tag)
+                logger.debug(f"Image texture updated successfully")
             else:
                 logger.debug(f"Image widget {self.image_tag} doesn't exist yet - this is normal for initial setup")
             
@@ -433,8 +436,8 @@ class MandelbrotGUI:
         """Update view information display."""
         if dpg.does_item_exist("view_info"):
             info = (
-                f"Real: [{self.view_bounds.x_min:.6f}, {self.view_bounds.x_max:.6f}]\\n"
-                f"Imag: [{self.view_bounds.y_min:.6f}, {self.view_bounds.y_max:.6f}]\\n"
+                f"Real: [{self.view_bounds.x_min:.6f}, {self.view_bounds.x_max:.6f}]\n"
+                f"Imag: [{self.view_bounds.y_min:.6f}, {self.view_bounds.y_max:.6f}]\n"
                 f"Size: {self.view_bounds.complex_width:.6f} x {self.view_bounds.complex_height:.6f}"
             )
             dpg.set_value("view_info", info)
@@ -472,16 +475,23 @@ class MandelbrotGUI:
     
     def _get_mouse_image_pos(self) -> Optional[Tuple[int, int]]:
         """Get mouse position relative to the image."""
-        mouse_pos = dpg.get_mouse_pos()
-        image_pos = dpg.get_item_pos(self.image_tag)
-        
-        rel_x = int(mouse_pos[0] - image_pos[0])
-        rel_y = int(mouse_pos[1] - image_pos[1])
-        
-        # Check if within image bounds
-        if 0 <= rel_x < self.image_width and 0 <= rel_y < self.image_height:
-            return (rel_x, rel_y)
-        return None
+        try:
+            mouse_pos = dpg.get_mouse_pos()
+            
+            # Get the image widget position directly
+            image_pos = dpg.get_item_pos(self.image_tag)
+            
+            # Calculate relative position within the image
+            rel_x = int(mouse_pos[0] - image_pos[0])
+            rel_y = int(mouse_pos[1] - image_pos[1])
+            
+            # Check if within image bounds
+            if 0 <= rel_x < self.image_width and 0 <= rel_y < self.image_height:
+                return (rel_x, rel_y)
+            return None
+        except Exception as e:
+            logger.debug(f"Mouse position error: {e}")
+            return None
     
     def _on_mouse_press(self, sender, app_data) -> None:
         """Handle mouse press to start area selection."""
@@ -490,16 +500,20 @@ class MandelbrotGUI:
             self.selection_start = pos
             self.selection_end = None
             self.selection_active = True
-            self._clear_selection_overlay()
             logger.debug(f"Selection started at: {pos}")
     
     def _on_mouse_drag(self, sender, app_data) -> None:
-        """Handle mouse drag to update selection rectangle."""
+        """Handle mouse drag to update selection area."""
         if self.selection_active:
             pos = self._get_mouse_image_pos()
             if pos:
                 self.selection_end = pos
-                self._draw_selection_rectangle()
+                
+                # Log drag position for feedback
+                if self.selection_start:
+                    width = abs(pos[0] - self.selection_start[0])
+                    height = abs(pos[1] - self.selection_start[1])
+                    logger.debug(f"Selection drag: {self.selection_start} -> {pos}, size: {width}x{height}")
     
     def _on_mouse_release(self, sender, app_data) -> None:
         """Handle mouse release to complete area selection."""
@@ -525,47 +539,7 @@ class MandelbrotGUI:
         self.selection_active = False
         self.selection_start = None
         self.selection_end = None
-        self._clear_selection_overlay()
     
-    def _draw_selection_rectangle(self) -> None:
-        """Draw selection rectangle overlay."""
-        if not (self.selection_start and self.selection_end):
-            return
-        
-        x1, y1 = self.selection_start
-        x2, y2 = self.selection_end
-        
-        # Ensure we have valid coordinates
-        min_x, max_x = min(x1, x2), max(x1, x2)
-        min_y, max_y = min(y1, y2), max(y1, y2)
-        
-        # Clear previous overlay
-        self._clear_selection_overlay()
-        
-        # Draw selection rectangle
-        dpg.draw_rectangle(
-            (min_x, min_y),
-            (max_x, max_y),
-            color=(255, 255, 0, 180),  # Yellow with transparency
-            thickness=2,
-            parent="selection_overlay"
-        )
-        
-        # Draw corner markers
-        corner_size = 3
-        for x, y in [(min_x, min_y), (max_x, min_y), (min_x, max_y), (max_x, max_y)]:
-            dpg.draw_circle(
-                (x, y),
-                corner_size,
-                color=(255, 255, 0, 255),
-                fill=(255, 255, 0, 100),
-                parent="selection_overlay"
-            )
-    
-    def _clear_selection_overlay(self) -> None:
-        """Clear the selection overlay."""
-        if dpg.does_item_exist("selection_overlay"):
-            dpg.delete_item("selection_overlay", children_only=True)
     
     def _zoom_to_selection(self) -> None:
         """Zoom to the selected area."""
@@ -631,6 +605,108 @@ class MandelbrotGUI:
             logger.info("Zoomed back in history")
         else:
             logger.info("No zoom history available")
+    
+    def _on_window_resize(self, sender, app_data) -> None:
+        """Handle window resize with throttling and visual feedback."""
+        if not dpg.does_item_exist(self.main_window_tag):
+            return
+            
+        current_time = time.time()
+        
+        # Throttle resize events to prevent excessive re-renders
+        if current_time - self.last_resize_time < self.resize_throttle_delay:
+            self.resize_pending = True
+            return
+            
+        self.last_resize_time = current_time
+        self.resize_pending = False
+        
+        # Get current window dimensions
+        window_width = dpg.get_item_width(self.main_window_tag)
+        window_height = dpg.get_item_height(self.main_window_tag)
+        
+        # Calculate new image dimensions with padding
+        new_image_width = max(200, window_width - 30)  # Minimum 200px width
+        new_image_height = max(150, window_height - 80)  # Minimum 150px height
+        
+        # Only update if dimensions changed significantly (avoid micro-updates)
+        width_diff = abs(new_image_width - self.image_width)
+        height_diff = abs(new_image_height - self.image_height)
+        
+        if width_diff > 10 or height_diff > 10:
+            logger.info(f"Window resized: {window_width}x{window_height} -> image: {new_image_width}x{new_image_height}")
+            
+            # Show resize feedback in status
+            self._update_status(f"Resizing to {new_image_width}x{new_image_height}...")
+            
+            # Update dimensions
+            self.image_width = new_image_width
+            self.image_height = new_image_height
+            
+            # Update view bounds to maintain aspect ratio
+            self.view_bounds = ViewBounds(
+                self.view_bounds.x_min, self.view_bounds.x_max,
+                self.view_bounds.y_min, self.view_bounds.y_max,
+                self.image_width, self.image_height
+            )
+            
+            # Resize the image widget
+            if dpg.does_item_exist(self.image_tag):
+                dpg.configure_item(self.image_tag, width=self.image_width, height=self.image_height)
+            
+            # Update status text wrap
+            if dpg.does_item_exist("status_text"):
+                dpg.configure_item("status_text", wrap=self.image_width + 10)
+            
+            # Update view information display
+            self._update_view_info()
+            
+            # Trigger optimized re-render with new dimensions
+            self._render_mandelbrot_optimized()
+    
+    def _render_mandelbrot_optimized(self) -> None:
+        """Optimized render for resize operations - uses lower quality for speed."""
+        if self.calculating:
+            logger.debug("Skipping optimized render - calculation in progress")
+            return
+        
+        # Use reduced iterations for resize preview (faster rendering)
+        preview_iterations = min(50, self.max_iterations // 2)
+        
+        logger.debug(f"Starting optimized render with {preview_iterations} iterations")
+        
+        self.calculating = True
+        self._update_status("Quick preview...")
+        
+        def quick_calculation():
+            try:
+                # Calculate with reduced iterations
+                iterations = mandelbrot_array(
+                    self.image_width, self.image_height,
+                    self.view_bounds.x_min, self.view_bounds.x_max,
+                    self.view_bounds.y_min, self.view_bounds.y_max,
+                    preview_iterations
+                )
+                
+                # Convert to RGB
+                rgb_image = iterations_to_rgb_array(iterations, preview_iterations, self.current_palette)
+                
+                # Update texture
+                self._update_texture(rgb_image)
+                self._update_view_info()
+                self._update_status("Preview ready - Click Render for full quality")
+                
+            except Exception as e:
+                logger.error(f"Optimized calculation error: {e}")
+                self._update_status(f"Preview error: {e}")
+            
+            finally:
+                self.calculating = False
+        
+        # Run in background
+        thread = threading.Thread(target=quick_calculation)
+        thread.daemon = True
+        thread.start()
     
     def run(self) -> None:
         """Run the GUI application."""

@@ -60,6 +60,9 @@ class MandelbrotGUI:
         self.last_resize_time = 0
         self.resize_throttle_delay = 0.2  # 200ms throttle
         
+        # Save functionality
+        self.current_rgb_image = None  # Store current image for saving
+        
         logger.info(f"MandelbrotGUI initialized: {width}x{height}")
     
     def setup_gui(self) -> None:
@@ -131,11 +134,15 @@ class MandelbrotGUI:
                 )
                 dpg.add_key_press_handler(
                     dpg.mvKey_Escape,
-                    callback=lambda: self._clear_selection_overlay()
+                    callback=lambda: logger.debug("Escape pressed")
                 )
                 dpg.add_key_press_handler(
                     dpg.mvKey_B,
                     callback=lambda: self._zoom_back()
+                )
+                dpg.add_key_press_handler(
+                    dpg.mvKey_S,
+                    callback=lambda: self._show_save_dialog()
                 )
         
         # Create window-specific handler registry for resize events
@@ -167,7 +174,7 @@ class MandelbrotGUI:
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
             temp_file = f.name
         
-        pil_image = Image.fromarray(black_image, 'RGB')
+        pil_image = Image.fromarray(black_image)
         pil_image.save(temp_file)
         
         # Load texture from file
@@ -256,6 +263,12 @@ class MandelbrotGUI:
                 width=250
             )
             
+            dpg.add_button(
+                label="Save Image",
+                callback=self._show_save_dialog,
+                width=250
+            )
+            
             dpg.add_separator()
             
             # View information
@@ -283,7 +296,7 @@ class MandelbrotGUI:
             dpg.add_text("• H - Reset to home view", wrap=250) 
             dpg.add_text("• O - Zoom out 2x", wrap=250)
             dpg.add_text("• B - Back (zoom history)", wrap=250)
-            dpg.add_text("• Escape - Clear selection", wrap=250)
+            dpg.add_text("• S - Save image", wrap=250)
             
         self._update_view_info()
     
@@ -295,12 +308,15 @@ class MandelbrotGUI:
         import os
         from PIL import Image
         
+        # Store current image for saving functionality
+        self.current_rgb_image = rgb_image.copy()
+        
         try:
             # Save image to temporary file
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
                 temp_file = f.name
             
-            pil_image = Image.fromarray(rgb_image, 'RGB')
+            pil_image = Image.fromarray(rgb_image)
             pil_image.save(temp_file)
             
             # Load texture from file
@@ -605,6 +621,99 @@ class MandelbrotGUI:
             logger.info("Zoomed back in history")
         else:
             logger.info("No zoom history available")
+    
+    def _show_save_dialog(self) -> None:
+        """Show dialog to save current image."""
+        if self.current_rgb_image is None:
+            self._update_status("No image to save - render first")
+            logger.warning("No current image available to save")
+            return
+        
+        # Generate default filename with timestamp
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"mandelbrot_{timestamp}.png"
+        
+        # Create save dialog
+        with dpg.window(
+            label="Save Image", 
+            tag="save_dialog",
+            modal=True,
+            width=400,
+            height=150,
+            pos=[200, 200]
+        ):
+            dpg.add_text("Enter filename for the image:")
+            dpg.add_input_text(
+                label="",
+                default_value=default_filename,
+                tag="save_filename_input",
+                width=350
+            )
+            
+            dpg.add_separator()
+            
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Save",
+                    callback=self._save_image_confirmed,
+                    width=100
+                )
+                dpg.add_button(
+                    label="Cancel", 
+                    callback=lambda: dpg.delete_item("save_dialog"),
+                    width=100
+                )
+    
+    def _save_image_confirmed(self) -> None:
+        """Save the image with the specified filename."""
+        if not dpg.does_item_exist("save_filename_input"):
+            return
+            
+        filename = dpg.get_value("save_filename_input").strip()
+        dpg.delete_item("save_dialog")
+        
+        if not filename:
+            self._update_status("Save cancelled - no filename provided")
+            return
+        
+        # Ensure .png extension
+        if not filename.lower().endswith('.png'):
+            filename += '.png'
+        
+        self._save_current_image(filename)
+    
+    def _save_current_image(self, filename: str) -> None:
+        """Save the current RGB image to a PNG file."""
+        if self.current_rgb_image is None:
+            self._update_status("No image to save")
+            return
+        
+        try:
+            from PIL import Image
+            import os
+            
+            logger.info(f"Saving current image to: {filename}")
+            self._update_status(f"Saving image to {filename}...")
+            
+            # Convert RGB array to PIL Image
+            pil_image = Image.fromarray(self.current_rgb_image)
+            
+            # Check if file exists and get user confirmation if needed
+            if os.path.exists(filename):
+                logger.warning(f"File {filename} already exists - overwriting")
+            
+            # Save the image
+            pil_image.save(filename)
+            
+            # Success feedback
+            self._update_status(f"Image saved successfully: {filename}")
+            logger.info(f"Image saved successfully to: {filename}")
+            
+        except Exception as e:
+            error_msg = f"Failed to save image: {e}"
+            self._update_status(error_msg)
+            logger.error(error_msg)
     
     def _on_window_resize(self, sender, app_data) -> None:
         """Handle window resize with throttling and visual feedback."""

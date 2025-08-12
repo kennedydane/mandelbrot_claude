@@ -136,7 +136,7 @@ def test_alternative_approaches():
         
         # Create test image
         test_image = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
-        pil_image = Image.fromarray(test_image, 'RGB')
+        pil_image = Image.fromarray(test_image)
         
         temp_file = "/tmp/test_texture.png"
         pil_image.save(temp_file)

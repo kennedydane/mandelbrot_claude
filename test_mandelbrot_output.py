@@ -38,7 +38,7 @@ def main():
     print(f"RGB range: {rgb_image.min()} to {rgb_image.max()}")
     
     # Save as PNG
-    pil_image = Image.fromarray(rgb_image, 'RGB')
+    pil_image = Image.fromarray(rgb_image)
     output_file = "test_mandelbrot_output.png"
     pil_image.save(output_file)
     

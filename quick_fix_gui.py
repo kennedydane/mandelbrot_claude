@@ -51,7 +51,7 @@ class QuickFixMandelbrotGUI:
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
             self.temp_file = f.name
             
-        pil_image = Image.fromarray(rgb_image, 'RGB')
+        pil_image = Image.fromarray(rgb_image)
         pil_image.save(self.temp_file)
         
         print(f"Saved image to: {self.temp_file}")

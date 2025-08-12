@@ -198,11 +198,11 @@ class MandelbrotGUI:
             from PIL import Image
             # Convert numpy array to PIL Image and save
             if image_data.dtype == np.uint8:
-                img = Image.fromarray(image_data, 'RGB')
+                img = Image.fromarray(image_data)
             else:
                 # Ensure it's in the right format
                 img_data = (image_data * 255).astype(np.uint8) if image_data.max() <= 1.0 else image_data.astype(np.uint8)
-                img = Image.fromarray(img_data, 'RGB')
+                img = Image.fromarray(img_data)
             
             img.save(temp_file)
             logger.debug(f"Saved temporary image: {temp_file}")

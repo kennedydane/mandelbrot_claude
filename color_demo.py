@@ -38,7 +38,7 @@ def create_mandelbrot_demo():
         rgb_image = iterations_to_rgb_array(iterations, max_iter, palette=palette)
         
         # Save as PNG using PIL
-        image = Image.fromarray(rgb_image, 'RGB')
+        image = Image.fromarray(rgb_image)
         filename = f"demo_output/mandelbrot_{palette}.png"
         image.save(filename)
         
@@ -60,7 +60,7 @@ def create_mandelbrot_demo():
         rgb_gradient = iterations_to_rgb_array(gradient, max_iter, palette=palette)
         
         # Save gradient
-        image = Image.fromarray(rgb_gradient, 'RGB')
+        image = Image.fromarray(rgb_gradient)
         filename = f"demo_output/gradient_{palette}.png"
         image.save(filename)
         

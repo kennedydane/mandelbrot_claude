@@ -215,7 +215,7 @@ class MandelbrotGUI:
                 label="Max Iterations",
                 default_value=self.max_iterations,
                 min_value=50,
-                max_value=500,
+                max_value=2000,
                 callback=self._on_iterations_changed,
                 tag="iterations_slider"
             )

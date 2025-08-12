@@ -56,6 +56,13 @@ Controls:
         help='Image height in pixels (default: 600)'
     )
     
+    parser.add_argument(
+        '--threads',
+        type=int,
+        default=0,
+        help='Number of threads for parallel processing (0=auto-detect, 1=serial mode, default: 0)'
+    )
+    
     return parser.parse_args()
 
 
@@ -66,9 +73,31 @@ def main():
     # Setup logging
     setup_logging(debug=args.debug)
     
+    # Configure threading
+    import os
+    if args.threads == 0:
+        # Auto-detect CPU cores
+        thread_count = os.cpu_count() or 1
+        use_parallel = True
+    elif args.threads == 1:
+        # Serial mode explicitly requested
+        thread_count = 1
+        use_parallel = False
+    else:
+        # Specific thread count requested
+        thread_count = max(1, args.threads)
+        use_parallel = True
+    
+    # Set Numba thread count
+    os.environ['NUMBA_NUM_THREADS'] = str(thread_count)
+    
+    from loguru import logger
+    mode = "parallel" if use_parallel else "serial"
+    logger.info(f"Starting Mandelbrot visualizer in {mode} mode with {thread_count} threads")
+    
     try:
         # Create and run GUI
-        gui = create_mandelbrot_gui(args.width, args.height)
+        gui = create_mandelbrot_gui(args.width, args.height, use_parallel=use_parallel)
         gui.run()
         
     except KeyboardInterrupt:

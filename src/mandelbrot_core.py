@@ -48,7 +48,7 @@ def _mandelbrot_iterations_fast(c: complex, max_iter: int) -> int:
 
 
 @nb.jit(nopython=True)
-def _mandelbrot_kernel(
+def _mandelbrot_kernel_serial(
     width: int, 
     height: int, 
     x_min: float, 
@@ -58,7 +58,7 @@ def _mandelbrot_kernel(
     max_iter: int
 ) -> np.ndarray:
     """
-    Numba-optimized kernel for computing Mandelbrot set over a grid.
+    Serial Numba-optimized kernel for computing Mandelbrot set over a grid.
     
     Args:
         width: Image width in pixels
@@ -88,6 +88,49 @@ def _mandelbrot_kernel(
     return result
 
 
+@nb.jit(nopython=True, parallel=True, nogil=True)
+def _mandelbrot_kernel_parallel(
+    width: int, 
+    height: int, 
+    x_min: float, 
+    x_max: float, 
+    y_min: float, 
+    y_max: float,
+    max_iter: int
+) -> np.ndarray:
+    """
+    Parallel Numba-optimized kernel for computing Mandelbrot set over a grid.
+    Uses prange for automatic parallelization across multiple CPU cores.
+    
+    Args:
+        width: Image width in pixels
+        height: Image height in pixels  
+        x_min, x_max: Real axis bounds
+        y_min, y_max: Imaginary axis bounds
+        max_iter: Maximum iterations per point
+        
+    Returns:
+        2D array of iteration counts
+    """
+    result = np.zeros((height, width), dtype=np.int32)
+    
+    x_step = (x_max - x_min) / width
+    y_step = (y_max - y_min) / height
+    
+    # Use prange for parallel execution across rows
+    for row in nb.prange(height):
+        for col in range(width):
+            # Map pixel coordinates to complex plane
+            real = x_min + col * x_step
+            imag = y_max - row * y_step  # Flip y-axis for screen coordinates
+            c = complex(real, imag)
+            
+            # Calculate iterations for this point
+            result[row, col] = _mandelbrot_iterations_fast(c, max_iter)
+    
+    return result
+
+
 def mandelbrot_array(
     width: int, 
     height: int, 
@@ -95,7 +138,8 @@ def mandelbrot_array(
     x_max: float,
     y_min: float,
     y_max: float,
-    max_iter: int
+    max_iter: int,
+    use_parallel: bool = True
 ) -> np.ndarray:
     """
     Calculate Mandelbrot set over a rectangular region.
@@ -108,14 +152,46 @@ def mandelbrot_array(
         y_min: Bottom boundary of complex plane region (imaginary axis)
         y_max: Top boundary of complex plane region (imaginary axis)
         max_iter: Maximum iterations per point
+        use_parallel: Whether to use parallel computation (default: True)
         
     Returns:
         2D numpy array of iteration counts with shape (height, width)
     """
-    logger.debug(f"Computing Mandelbrot array {width}x{height} for region "
-                f"[{x_min:.6f}, {x_max:.6f}] x [{y_min:.6f}, {y_max:.6f}]")
+    import os
+    import time
     
-    return _mandelbrot_kernel(width, height, x_min, x_max, y_min, y_max, max_iter)
+    # Get thread count for logging
+    thread_count = int(os.environ.get('NUMBA_NUM_THREADS', os.cpu_count() or 1))
+    mode = "parallel" if use_parallel else "serial"
+    
+    logger.debug(f"Computing Mandelbrot array {width}x{height} for region "
+                f"[{x_min:.6f}, {x_max:.6f}] x [{y_min:.6f}, {y_max:.6f}] "
+                f"using {mode} mode with {thread_count if use_parallel else 1} threads")
+    
+    start_time = time.time()
+    
+    try:
+        if use_parallel:
+            result = _mandelbrot_kernel_parallel(width, height, x_min, x_max, y_min, y_max, max_iter)
+        else:
+            result = _mandelbrot_kernel_serial(width, height, x_min, x_max, y_min, y_max, max_iter)
+            
+        elapsed = time.time() - start_time
+        pixels = width * height
+        pixels_per_sec = pixels / elapsed if elapsed > 0 else 0
+        
+        logger.debug(f"Mandelbrot calculation completed in {elapsed:.3f}s "
+                    f"({pixels_per_sec:,.0f} pixels/sec, {mode} mode)")
+        
+        return result
+        
+    except Exception as e:
+        if use_parallel:
+            logger.warning(f"Parallel calculation failed: {e}, falling back to serial mode")
+            return mandelbrot_array(width, height, x_min, x_max, y_min, y_max, max_iter, use_parallel=False)
+        else:
+            logger.error(f"Serial calculation failed: {e}")
+            raise
 
 
 def mandelbrot_array_centered(
@@ -123,7 +199,8 @@ def mandelbrot_array_centered(
     height: int, 
     center: complex, 
     zoom: float, 
-    max_iter: int
+    max_iter: int,
+    use_parallel: bool = True
 ) -> np.ndarray:
     """
     Calculate Mandelbrot set using center and zoom (convenience function).
@@ -134,6 +211,7 @@ def mandelbrot_array_centered(
         center: Complex number at center of view
         zoom: Zoom level (higher = more zoomed in)  
         max_iter: Maximum iterations per point
+        use_parallel: Whether to use parallel computation (default: True)
         
     Returns:
         2D numpy array of iteration counts with shape (height, width)
@@ -158,4 +236,4 @@ def mandelbrot_array_centered(
     y_min = center.imag - view_height / 2
     y_max = center.imag + view_height / 2
     
-    return mandelbrot_array(width, height, x_min, x_max, y_min, y_max, max_iter)
+    return mandelbrot_array(width, height, x_min, x_max, y_min, y_max, max_iter, use_parallel)

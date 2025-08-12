@@ -19,10 +19,11 @@ class MandelbrotGUI:
     Mandelbrot GUI with proper texture handling and progressive zoom UX.
     """
     
-    def __init__(self, width: int = 600, height: int = 400):
+    def __init__(self, width: int = 600, height: int = 400, use_parallel: bool = True):
         """Initialize with reasonable size for texture performance."""
         self.image_width = width
         self.image_height = height
+        self.use_parallel = use_parallel
         
         # View bounds
         self.view_bounds = ViewBounds(-2.5, 1.0, -1.25, 1.25, width, height)
@@ -62,6 +63,10 @@ class MandelbrotGUI:
         
         # Save functionality
         self.current_rgb_image = None  # Store current image for saving
+        
+        # Performance tracking
+        self.last_calculation_time = 0.0
+        self.last_pixels_per_sec = 0.0
         
         logger.info(f"MandelbrotGUI initialized: {width}x{height}")
     
@@ -369,13 +374,18 @@ class MandelbrotGUI:
         logger.info("Rendering initial Mandelbrot image")
         
         try:
-            # Calculate iterations
+            # Calculate iterations with timing
+            import time
+            start_time = time.time()
             iterations = mandelbrot_array(
                 self.image_width, self.image_height,
                 self.view_bounds.x_min, self.view_bounds.x_max,
                 self.view_bounds.y_min, self.view_bounds.y_max,
-                self.max_iterations
+                self.max_iterations,
+                self.use_parallel
             )
+            self.last_calculation_time = time.time() - start_time
+            self.last_pixels_per_sec = (self.image_width * self.image_height) / self.last_calculation_time if self.last_calculation_time > 0 else 0
             
             # Convert to RGB
             rgb_image = iterations_to_rgb_array(iterations, self.max_iterations, self.current_palette)
@@ -414,13 +424,18 @@ class MandelbrotGUI:
             # Simulate progress updates
             dpg.set_value("progress_bar", 0.2)
             
-            # Calculate iterations
+            # Calculate iterations with timing
+            import time
+            start_time = time.time()
             iterations = mandelbrot_array(
                 self.image_width, self.image_height,
                 self.view_bounds.x_min, self.view_bounds.x_max,
                 self.view_bounds.y_min, self.view_bounds.y_max,
-                self.max_iterations
+                self.max_iterations,
+                self.use_parallel
             )
+            self.last_calculation_time = time.time() - start_time
+            self.last_pixels_per_sec = (self.image_width * self.image_height) / self.last_calculation_time if self.last_calculation_time > 0 else 0
             
             dpg.set_value("progress_bar", 0.6)
             
@@ -451,11 +466,23 @@ class MandelbrotGUI:
     def _update_view_info(self) -> None:
         """Update view information display."""
         if dpg.does_item_exist("view_info"):
+            import os
+            thread_count = int(os.environ.get('NUMBA_NUM_THREADS', os.cpu_count() or 1))
+            mode = "parallel" if self.use_parallel else "serial"
+            
             info = (
                 f"Real: [{self.view_bounds.x_min:.6f}, {self.view_bounds.x_max:.6f}]\n"
                 f"Imag: [{self.view_bounds.y_min:.6f}, {self.view_bounds.y_max:.6f}]\n"
-                f"Size: {self.view_bounds.complex_width:.6f} x {self.view_bounds.complex_height:.6f}"
+                f"Size: {self.view_bounds.complex_width:.6f} x {self.view_bounds.complex_height:.6f}\n"
+                f"Mode: {mode} ({thread_count if self.use_parallel else 1} threads)"
             )
+            
+            if self.last_calculation_time > 0:
+                info += (
+                    f"\nLast render: {self.last_calculation_time:.3f}s"
+                    f"\nPerformance: {self.last_pixels_per_sec:,.0f} pixels/sec"
+                )
+                
             dpg.set_value("view_info", info)
     
     def _on_iterations_changed(self, sender, app_data) -> None:
@@ -794,7 +821,8 @@ class MandelbrotGUI:
                     self.image_width, self.image_height,
                     self.view_bounds.x_min, self.view_bounds.x_max,
                     self.view_bounds.y_min, self.view_bounds.y_max,
-                    preview_iterations
+                    preview_iterations,
+                    self.use_parallel
                 )
                 
                 # Convert to RGB
@@ -846,17 +874,18 @@ class MandelbrotGUI:
         logger.info("GUI shutdown complete")
 
 
-def create_mandelbrot_gui(width: int = 600, height: int = 400) -> MandelbrotGUI:
+def create_mandelbrot_gui(width: int = 600, height: int = 400, use_parallel: bool = True) -> MandelbrotGUI:
     """
     Create and setup Mandelbrot GUI.
     
     Args:
         width: Image width in pixels
         height: Image height in pixels
+        use_parallel: Whether to use parallel processing
         
     Returns:
         Configured MandelbrotGUI instance
     """
-    gui = MandelbrotGUI(width, height)
+    gui = MandelbrotGUI(width, height, use_parallel=use_parallel)
     gui.setup_gui()
     return gui

@@ -1,0 +1,4 @@
+dearpygui>=1.11.1
+numpy>=1.24.0
+numba>=0.58.0
+pillow>=10.0.0
